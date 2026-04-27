@@ -68,22 +68,6 @@ def search_movie(title: str) -> dict:
     return _parse_movie_detail(html, title)
 
 
-def search_drama(title: str) -> dict:
-    """
-    Search Naver for a Korean drama and return the top result.
-
-    Args:
-        title: Drama title in Korean or English
-
-    Returns:
-        Dict with metadata from Naver's drama card.
-    """
-    query = f"드라마 {title}"
-    url = f"{NAVER_SEARCH_BASE}?where=nexearch&sm=tab_etc&query={quote(query)}"
-    html = _get_page_html(url, wait_selector="body")
-    return _parse_movie_detail(html, title)
-
-
 # ── parsers ───────────────────────────────────────────────────────────────────
 
 def _parse_movie_detail(html: str, search_title: str = "") -> dict:
@@ -112,10 +96,10 @@ def _parse_movie_detail(html: str, search_title: str = "") -> dict:
     state_tag = wrap.select_one("h2.title span.state_end")
     result["status"] = state_tag.get_text(strip=True) if state_tag else None
 
-    # Subtitle line: English title + year
+    # Subtitle line: type (영화) | English title | year
     sub_txts = [s.get_text(strip=True) for s in wrap.select("div.sub_title span.txt")]
-    result["english_title"] = sub_txts[0] if sub_txts else None
-    result["content_type"] = sub_txts[1] if len(sub_txts) > 1 else None  # 영화 or 드라마
+    result["content_type"] = sub_txts[0] if sub_txts else None
+    result["english_title"] = sub_txts[1] if len(sub_txts) > 1 else None
     result["year"] = int(sub_txts[2]) if len(sub_txts) > 2 and sub_txts[2].isdigit() else None
 
     # ── metadata ───────────────────────────────────────────────────────────
@@ -124,13 +108,18 @@ def _parse_movie_detail(html: str, search_title: str = "") -> dict:
     if info_area:
         info_groups = info_area.select("div.info_group")
         if info_groups:
-            # First group: genre, country, runtime
+            # First group: genre, country, runtime — each in separate dd tags
             first_group_dds = info_groups[0].select("dd")
-            meta_text = " ".join(dd.get_text(strip=True) for dd in first_group_dds)
-            # Parse genre (Korean text before country/runtime)
-            result["genre"] = first_group_dds[0].get_text(strip=True) if first_group_dds else None
-            # Runtime
-            runtime_match = re.search(r"(\d+)분", meta_text)
+            dd_texts = [dd.get_text(strip=True) for dd in first_group_dds]
+            result["genre"] = dd_texts[0] if dd_texts else None
+            result["country"] = dd_texts[1] if len(dd_texts) > 1 else None
+            # Runtime: find the dd containing 분
+            runtime_match = None
+            for dd_text in dd_texts:
+                m = re.search(r"(\d+)분", dd_text)
+                if m:
+                    runtime_match = m
+                    break
             result["runtime_minutes"] = int(runtime_match.group(1)) if runtime_match else None
 
         # Release date: second info group
@@ -177,6 +166,7 @@ def _parse_movie_detail(html: str, search_title: str = "") -> dict:
     result["audience_rating"] = None      # 실관람객 평점 (verified ticket buyers)
     result["netizen_rating"] = None       # 네티즌 평점 (general users)
 
+    # Primary: item_area boxes (current films)
     rating_boxes = wrap.select("div.item_area")
     for box in rating_boxes:
         label = box.select_one("strong.item_title")
@@ -192,6 +182,18 @@ def _parse_movie_detail(html: str, search_title: str = "") -> dict:
                     result["netizen_rating"] = score_val
             except ValueError:
                 pass
+
+    # Fallback: lego_rating_box_see (older films use different layout)
+    if result["audience_rating"] is None:
+        rating_box = wrap.select_one("a.lego_rating_box_see")
+        if rating_box:
+            audience_score = rating_box.select_one("span.area_star_number")
+            if audience_score:
+                score_text = audience_score.get_text(strip=True).replace("10", "").strip()
+                try:
+                    result["audience_rating"] = float(score_text)
+                except ValueError:
+                    pass
 
     # ── cast ───────────────────────────────────────────────────────────────
     cast = []
