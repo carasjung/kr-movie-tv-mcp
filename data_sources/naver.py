@@ -103,24 +103,31 @@ def _parse_movie_detail(html: str, search_title: str = "") -> dict:
     result["year"] = int(sub_txts[2]) if len(sub_txts) > 2 and sub_txts[2].isdigit() else None
 
     # ── metadata ───────────────────────────────────────────────────────────
-    # Genre / country / runtime: first dl.info_group
-    info_area = wrap.select_one("div.detail_info dl.info")
+    # Genre/country/runtime are in ONE dd tag separated by span.cm_bar_info
+    # Structure: <dd>공포<span class="cm_bar_info"></span>대한민국<span>...</span>95분</dd>
+    info_area = wrap.select_one("div.detail_info") or wrap.select_one("div.cm_info_box")
     if info_area:
         info_groups = info_area.select("div.info_group")
         if info_groups:
-            # First group: genre, country, runtime — each in separate dd tags
-            first_group_dds = info_groups[0].select("dd")
-            dd_texts = [dd.get_text(strip=True) for dd in first_group_dds]
-            result["genre"] = dd_texts[0] if dd_texts else None
-            result["country"] = dd_texts[1] if len(dd_texts) > 1 else None
-            # Runtime: find the dd containing 분
-            runtime_match = None
-            for dd_text in dd_texts:
-                m = re.search(r"(\d+)분", dd_text)
-                if m:
-                    runtime_match = m
-                    break
-            result["runtime_minutes"] = int(runtime_match.group(1)) if runtime_match else None
+            # First group: replace bar spans with pipe separator then split
+            first_dd = info_groups[0].select_one("dd")
+            if first_dd:
+                for span in first_dd.select("span"):
+                    span.replace_with("|")
+                segments = [s.strip() for s in first_dd.get_text().split("|") if s.strip()]
+                result["genre"] = segments[0] if segments else None
+                result["country"] = segments[1] if len(segments) > 1 else None
+                runtime_match = None
+                for seg in segments:
+                    m = re.search(r"(\d+)분", seg)
+                    if m:
+                        runtime_match = m
+                        break
+                result["runtime_minutes"] = int(runtime_match.group(1)) if runtime_match else None
+            else:
+                result["genre"] = None
+                result["country"] = None
+                result["runtime_minutes"] = None
 
         # Release date: second info group
         if len(info_groups) > 1:
@@ -130,6 +137,7 @@ def _parse_movie_detail(html: str, search_title: str = "") -> dict:
             result["release_date"] = None
     else:
         result["genre"] = None
+        result["country"] = None
         result["runtime_minutes"] = None
         result["release_date"] = None
 
