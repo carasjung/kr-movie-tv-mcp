@@ -6,7 +6,6 @@ Note: AsianWiki tests use httpx (fast). Baeksang test uses Playwright (slower).
 """
 
 from data_sources.awards import (
-    get_ceremony_years,
     get_awards,
     get_recent_awards,
     search_awards_by_title,
@@ -52,10 +51,16 @@ def test_blue_dragon():
     for cat in result["categories"][:5]:
         print(f"  [{cat['category']}] {cat['winner']} — {cat['winner_show']}")
 
+    print("\n=== Blue Dragon Series Awards 2024 (OTT) ===")
+    result = get_awards("blue_dragon_ott", 2024)
+    print(f"  Categories: {len(result['categories'])}")
+    for cat in result["categories"][:5]:
+        print(f"  [{cat['category']}] {cat['winner']} — {cat['winner_show']}")
+
 
 def test_search_by_title():
-    print("\n=== Search Awards: Parasite ===")
-    matches = search_awards_by_title("Parasite", ceremony_key="blue_dragon", years=5)
+    print("\n=== Search Awards: Parasite (blue dragon, 10 years) ===")
+    matches = search_awards_by_title("Parasite", ceremony_key="blue_dragon", years=10)
     print(f"  Total matches: {len(matches)}")
     for m in matches:
         status = "WON" if m["won"] else "nominated"
@@ -76,7 +81,6 @@ def test_baeksang_2025():
 
 
 if __name__ == "__main__":
-    test_ceremony_years()
     test_sbs_drama_awards()
     test_kbs_drama_awards()
     test_blue_dragon()

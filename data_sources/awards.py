@@ -26,10 +26,11 @@ BAEKSANG_BASE = "https://www.baeksangawards.co.kr"
 
 # Ceremony slug patterns on AsianWiki
 CEREMONY_SLUGS = {
-    "kbs_drama":     "KBS_Drama_Awards",
-    "mbc_drama":     "MBC_Drama_Awards",
-    "sbs_drama":     "SBS_Drama_Awards",
-    "blue_dragon":   "Blue_Dragon_Film_Awards",
+    "kbs_drama":       "KBS_Drama_Awards",
+    "mbc_drama":       "MBC_Drama_Awards",
+    "sbs_drama":       "SBS_Drama_Awards",
+    "blue_dragon":     "Blue_Dragon_Film_Awards",
+    "blue_dragon_ott": "Blue_Dragon_Series_Awards",
 }
 
 HEADERS = {
@@ -68,14 +69,19 @@ def _get_ceremony_years(ceremony_key: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
 
     years = []
-    # Links follow pattern: /2025_SBS_Drama_Awards
-    pattern = re.compile(r"/(\d{4})_" + slug.replace("_Awards", "") + r".*Awards?$", re.IGNORECASE)
+    # Links follow two patterns:
+    # Simple:   /2025_SBS_Drama_Awards
+    # Extended: /2025_(46th)_Blue_Dragon_Film_Awards
+    pattern = re.compile(r"^/(\d{4})(?:_\([^)]+\))?_.*" + re.escape(slug.split("_")[0]) + r"", re.IGNORECASE)
 
     for a in soup.select("a[href]"):
         href = a.get("href", "")
-        match = pattern.match(href)
-        if match:
-            year = int(match.group(1))
+        if not href.startswith("/"):
+            continue
+        year_match = re.match(r"^/(\d{4})", href)
+        slug_check = slug.replace("_", ".").replace(".", ".*")
+        if year_match and re.search(slug_check, href, re.IGNORECASE):
+            year = int(year_match.group(1))
             years.append({
                 "year": year,
                 "url": f"{ASIANWIKI_BASE}{href}",
@@ -133,29 +139,52 @@ def _parse_ceremony_page(url: str, year: int, ceremony_name: str) -> dict:
 
         # Winner/nominees list
         elif element.name == "ul" and current_category is not None:
-            items = element.select("> li")
+            items = element.find_all("li", recursive=False)
             for item in items:
                 text = item.get_text(strip=True)
                 bold = item.select_one("b")
 
                 if bold and "Award Winner" in bold.get_text():
-                    # Parse winner
+                    # Two formats exist:
+                    # Drama: Person ("Show") → links[0]=person, links[1]=show
+                    # Film:  "Title"         → links[0]=title only
                     links = item.select("a")
+                    item_text = item.get_text(strip=True)
                     if links:
-                        current_category["winner"] = links[0].get_text(strip=True)
-                        if len(links) > 1:
-                            current_category["winner_show"] = links[1].get_text(strip=True)
+                        # Check if winner text starts with a quote — film/title format
+                        # Remove bold text to get just the value part
+                        bold_text = bold.get_text(strip=True)
+                        value_text = item_text.replace(bold_text, "").strip().lstrip(":")
+                        if value_text.startswith('"') or (len(links) == 1 and '("' not in item_text):
+                            # Film format: title only
+                            current_category["winner"] = links[0].get_text(strip=True)
+                            current_category["winner_show"] = None
+                        else:
+                            # Drama format: person + show
+                            current_category["winner"] = links[0].get_text(strip=True)
+                            if len(links) > 1:
+                                current_category["winner_show"] = links[1].get_text(strip=True)
 
                 elif bold and "Nominees" in bold.get_text():
                     # Parse nominees from nested ul
+                    # Handles both: Person ("Show") and "Title" formats
                     nominee_list = item.select("ul li")
                     for nom in nominee_list:
                         nom_links = nom.select("a")
+                        nom_text = nom.get_text(strip=True)
                         if nom_links:
-                            nominee = {
-                                "name": nom_links[0].get_text(strip=True),
-                                "show": nom_links[1].get_text(strip=True) if len(nom_links) > 1 else None,
-                            }
+                            if nom_text.startswith('"') or len(nom_links) == 1:
+                                # Film format: title only
+                                nominee = {
+                                    "name": nom_links[0].get_text(strip=True),
+                                    "show": None,
+                                }
+                            else:
+                                # Drama format: person + show
+                                nominee = {
+                                    "name": nom_links[0].get_text(strip=True),
+                                    "show": nom_links[1].get_text(strip=True) if len(nom_links) > 1 else None,
+                                }
                             current_category["nominees"].append(nominee)
 
                 elif not bold:
@@ -176,9 +205,11 @@ def _parse_ceremony_page(url: str, year: int, ceremony_name: str) -> dict:
 def get_awards(ceremony_key: str, year: int) -> dict:
     """
     Get full awards data for a specific ceremony and year from AsianWiki.
+    Looks up the correct URL from the index page to handle edition numbers
+    (e.g. Blue Dragon uses '2024_(45th)_Blue_Dragon_Film_Awards').
 
     Args:
-        ceremony_key: 'kbs_drama', 'mbc_drama', 'sbs_drama', or 'blue_dragon'
+        ceremony_key: 'kbs_drama', 'mbc_drama', 'sbs_drama', 'blue_dragon', or 'blue_dragon_ott'
         year:         Award year (e.g. 2024, 2023)
 
     Returns:
@@ -186,8 +217,22 @@ def get_awards(ceremony_key: str, year: int) -> dict:
     """
     slug = CEREMONY_SLUGS[ceremony_key]
     ceremony_name = slug.replace("_", " ")
-    url = f"{ASIANWIKI_BASE}/{year}_{slug}"
-    return _parse_ceremony_page(url, year, ceremony_name)
+
+    # First try simple URL pattern (works for KBS/MBC/SBS)
+    simple_url = f"{ASIANWIKI_BASE}/{year}_{slug}"
+    try:
+        return _parse_ceremony_page(simple_url, year, ceremony_name)
+    except Exception:
+        pass
+
+    # Fallback: look up exact URL from index page (needed for Blue Dragon)
+    years = _get_ceremony_years(ceremony_key)
+    for y in years:
+        if y["year"] == year:
+            return _parse_ceremony_page(y["url"], year, ceremony_name)
+
+    return {"ceremony": ceremony_name, "year": year, "url": "", "categories": [],
+            "error": f"No data found for {year}"}
 
 
 def get_recent_awards(ceremony_key: str, num_years: int = 3) -> list[dict]:
