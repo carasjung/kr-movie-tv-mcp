@@ -144,23 +144,19 @@ def _parse_ceremony_page(url: str, year: int, ceremony_name: str) -> dict:
                 text = item.get_text(strip=True)
                 bold = item.select_one("b")
 
-                if bold and "Award Winner" in bold.get_text():
-                    # Two formats exist:
-                    # Drama: Person ("Show") → links[0]=person, links[1]=show
-                    # Film:  "Title"         → links[0]=title only
+                if bold and ("Award Winner" in bold.get_text() or bold.get_text().strip().rstrip(":") == "Winner"):
                     links = item.select("a")
                     item_text = item.get_text(strip=True)
+                    bold_text = bold.get_text(strip=True)
+                    value_text = item_text.replace(bold_text, "").strip().lstrip(":").strip()
                     if links:
-                        # Check if winner text starts with a quote — film/title format
-                        # Remove bold text to get just the value part
-                        bold_text = bold.get_text(strip=True)
-                        value_text = item_text.replace(bold_text, "").strip().lstrip(":")
-                        if value_text.startswith('"') or (len(links) == 1 and '("' not in item_text):
-                            # Film format: title only
+                        if value_text.startswith('"'):
+                            # Film/series format: "Title" (Platform) or just "Title"
                             current_category["winner"] = links[0].get_text(strip=True)
+                            # Second link may be platform not show — skip it
                             current_category["winner_show"] = None
                         else:
-                            # Drama format: person + show
+                            # Drama format: Person ("Show")
                             current_category["winner"] = links[0].get_text(strip=True)
                             if len(links) > 1:
                                 current_category["winner_show"] = links[1].get_text(strip=True)
@@ -261,7 +257,7 @@ def get_recent_awards(ceremony_key: str, num_years: int = 3) -> list[dict]:
 
 def search_awards_by_title(title: str, ceremony_key: str = None, years: int = 5) -> list[dict]:
     """
-    Search for all awards won/nominated for a specific show title.
+    Search for all awards won/nominated for a specific show or film title.
 
     Args:
         title:        Show or movie title to search for
@@ -270,6 +266,7 @@ def search_awards_by_title(title: str, ceremony_key: str = None, years: int = 5)
 
     Returns:
         List of matching award entries with year, ceremony, category, win status.
+        Deduplicates winner entries that also appear in nominees list.
     """
     ceremonies = [ceremony_key] if ceremony_key else list(CEREMONY_SLUGS.keys())
     matches = []
@@ -284,25 +281,43 @@ def search_awards_by_title(title: str, ceremony_key: str = None, years: int = 5)
                 CEREMONY_SLUGS[key].replace("_", " ")
             )
             for cat in data["categories"]:
-                # Check winner
-                if cat["winner_show"] and title_lower in cat["winner_show"].lower():
+                winner_show = cat.get("winner_show") or ""
+                winner_name = cat.get("winner") or ""
+
+                # Match on show title OR winner name (for film awards where winner IS the title)
+                winner_matches = (
+                    title_lower in winner_show.lower() or
+                    title_lower in winner_name.lower()
+                )
+
+                if winner_matches:
                     matches.append({
                         "year": data["year"],
                         "ceremony": data["ceremony"],
                         "category": cat["category"],
-                        "winner": cat["winner"],
-                        "show": cat["winner_show"],
+                        "winner": winner_name,
+                        "show": winner_show or winner_name,
                         "won": True,
                     })
-                # Check nominees
+
+                # Check nominees — skip if they duplicate the winner
                 for nom in cat["nominees"]:
-                    if nom["show"] and title_lower in nom["show"].lower():
+                    nom_show = nom.get("show") or ""
+                    nom_name = nom.get("name") or ""
+                    nom_matches = (
+                        title_lower in nom_show.lower() or
+                        title_lower in nom_name.lower()
+                    )
+                    if nom_matches:
+                        # Skip if this is the same person/title as winner (dedup)
+                        if nom_name == winner_name and winner_matches:
+                            continue
                         matches.append({
                             "year": data["year"],
                             "ceremony": data["ceremony"],
                             "category": cat["category"],
-                            "winner": nom["name"],
-                            "show": nom["show"],
+                            "winner": nom_name,
+                            "show": nom_show or nom_name,
                             "won": False,
                         })
             time.sleep(0.3)
