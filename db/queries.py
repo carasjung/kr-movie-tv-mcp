@@ -418,10 +418,12 @@ def get_ost_albums(show_id: str) -> list[dict]:
 
 def upsert_award(data: dict) -> dict:
     """Insert or update an award record."""
-    result = _supabase.table("awards").upsert(
-        _clean(data),
-        on_conflict="ceremony,year,category,winner_name"
-    ).execute()
+    # Try to find existing record first
+    existing = _supabase.table("awards")         .select("id")         .eq("ceremony", data["ceremony"])         .eq("year", data["year"])         .eq("category", data["category"])         .eq("winner_name", data.get("winner_name", ""))         .execute().data
+    if existing:
+        result = _supabase.table("awards")             .update(_clean(data))             .eq("id", existing[0]["id"])             .execute()
+    else:
+        result = _supabase.table("awards")             .insert(_clean(data))             .execute()
     return result.data[0] if result.data else {}
 
 
