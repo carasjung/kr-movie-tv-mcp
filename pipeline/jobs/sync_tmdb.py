@@ -4,12 +4,6 @@ pipeline/jobs/sync_tmdb.py — Sync Korean movies and TV shows from TMDB.
 This is the seed job — it populates the core movies and tv_shows tables
 that all other jobs enrich with additional data.
 
-Fetches:
-- Korean movies (discover + popular + top rated)
-- Korean TV shows (discover + popular + top rated)
-- Cast and crew for each title
-- Per-title details (genres, runtime, etc.)
-
 Schedule: Nightly at 2am
 """
 
@@ -22,7 +16,6 @@ from data_sources.tmdb import (
     discover_korean_content,
     get_movie_details,
     get_show_details,
-    get_trending_korean,
 )
 from db.queries import (
     upsert_movie,
@@ -30,8 +23,6 @@ from db.queries import (
     upsert_person,
     upsert_movie_cast,
     upsert_show_cast,
-    get_movie_by_tmdb_id,
-    get_show_by_tmdb_id,
 )
 from pipeline.utils import (
     get_logger,
@@ -40,7 +31,6 @@ from pipeline.utils import (
     normalize_genres,
     safe_float,
     safe_int,
-    parse_runtime_minutes,
     map_tmdb_status,
     polite_delay,
     run_with_retry,
@@ -53,9 +43,7 @@ log = get_logger("sync_tmdb")
 # ── transformers ──────────────────────────────────────────────────────────────
 
 def _transform_movie(raw: dict) -> dict:
-    """Transform raw TMDB movie details into DB schema."""
-    genres = normalize_genres([g["name"] for g in raw.get("genres", [])])
-
+    """Transform normalized TMDB movie details into DB schema."""
     return {
         "tmdb_id":           str(raw["id"]),
         "title_english":     raw.get("title") or raw.get("original_title", "Unknown"),
@@ -63,46 +51,46 @@ def _transform_movie(raw: dict) -> dict:
         "synopsis_short":    raw.get("overview"),
         "release_year":      extract_year(raw.get("release_date")),
         "release_date":      parse_date(raw.get("release_date")),
-        "runtime_minutes":   safe_int(raw.get("runtime")),
-        "genres":            genres,
+        "runtime_minutes":   safe_int(raw.get("runtime_minutes")),
+        "genres":            normalize_genres(raw.get("genres", [])),
         "status":            raw.get("status"),
         "country":           "South Korea",
-        "poster_url":        f"https://image.tmdb.org/t/p/w500{raw['poster_path']}" if raw.get("poster_path") else None,
-        "tmdb_rating":       safe_float(raw.get("vote_average")),
+        "poster_url":        raw.get("poster_url"),
+        "tmdb_rating":       safe_float(raw.get("rating")),
     }
 
 
 def _transform_show(raw: dict) -> dict:
-    """Transform raw TMDB TV show details into DB schema."""
-    genres = normalize_genres([g["name"] for g in raw.get("genres", [])])
+    """Transform normalized TMDB TV show details into DB schema."""
     networks = raw.get("networks", [])
-    network = networks[0]["name"] if networks else None
+    network = networks[0] if networks else None
 
     return {
         "tmdb_id":           str(raw["id"]),
-        "title_english":     raw.get("name") or raw.get("original_name", "Unknown"),
-        "title_korean":      raw.get("original_name") if raw.get("original_language") == "ko" else None,
+        "title_english":     raw.get("title") or raw.get("original_title", "Unknown"),
+        "title_korean":      raw.get("original_title") if raw.get("original_language") == "ko" else None,
         "synopsis_short":    raw.get("overview"),
         "year":              extract_year(raw.get("first_air_date")),
         "first_air_date":    parse_date(raw.get("first_air_date")),
         "last_air_date":     parse_date(raw.get("last_air_date")),
         "status":            map_tmdb_status(raw.get("status")),
-        "total_episodes":    safe_int(raw.get("number_of_episodes")),
-        "genres":            genres,
+        "total_episodes":    safe_int(raw.get("total_episodes")),
+        "genres":            normalize_genres(raw.get("genres", [])),
         "network":           network,
         "content_type":      "Korean Drama",
-        "poster_url":        f"https://image.tmdb.org/t/p/w500{raw['poster_path']}" if raw.get("poster_path") else None,
-        "tmdb_rating":       safe_float(raw.get("vote_average")),
+        "poster_url":        raw.get("poster_url"),
+        "tmdb_rating":       safe_float(raw.get("rating")),
     }
 
 
-def _transform_person(raw: dict) -> dict:
-    """Transform raw TMDB person into DB schema."""
+def _build_person_data(tmdb_id: int, member: dict) -> dict:
+    """Build a person record from a normalized TMDB cast member."""
     return {
-        "tmdb_person_id":        str(raw["id"]),
-        "name_english":          raw.get("name", "Unknown"),
-        "known_for_department":  raw.get("known_for_department"),
-        "profile_url":           f"https://image.tmdb.org/t/p/w185{raw['profile_path']}" if raw.get("profile_path") else None,
+        "tmdb_person_id":       f"tmdb_{tmdb_id}_{member['name'].replace(' ', '_')}",
+        "name_english":         member.get("name", "Unknown"),
+        "name_korean":          member.get("korean_name"),
+        "profile_url":          member.get("profile_url"),
+        "known_for_department": "Acting",
     }
 
 
@@ -114,19 +102,21 @@ def fetch_korean_movie_ids() -> list[int]:
     log.info("Fetching Korean movie IDs from TMDB...")
     all_ids = set()
 
-    # Discover all Korean movies, page through results
     page = 1
     while True:
-        results = discover_korean_content(content_type="movie", page=page)
+        response = discover_korean_content(content_type="movie", page=page)
+        if not response:
+            break
+        # Unwrap results list from response dict
+        results = response.get("results", []) if isinstance(response, dict) else response
         if not results:
             break
         for r in results:
             all_ids.add(r["id"])
-        if len(results) < 20:
+        total_pages = response.get("total_pages", 1) if isinstance(response, dict) else 1
+        if page >= total_pages or page >= 500:
             break
         page += 1
-        if page > 500:  # TMDB max pages
-            break
         polite_delay(0.25)
 
     log.info(f"Found {len(all_ids)} Korean movie IDs")
@@ -141,16 +131,18 @@ def fetch_korean_show_ids() -> list[int]:
 
     page = 1
     while True:
-        results = discover_korean_content(content_type="tv", page=page)
+        response = discover_korean_content(content_type="tv", page=page)
+        if not response:
+            break
+        results = response.get("results", []) if isinstance(response, dict) else response
         if not results:
             break
         for r in results:
             all_ids.add(r["id"])
-        if len(results) < 20:
+        total_pages = response.get("total_pages", 1) if isinstance(response, dict) else 1
+        if page >= total_pages or page >= 500:
             break
         page += 1
-        if page > 500:
-            break
         polite_delay(0.25)
 
     log.info(f"Found {len(all_ids)} Korean TV show IDs")
@@ -164,38 +156,20 @@ def sync_movie(tmdb_id: int) -> dict | None:
     if not raw:
         return None
 
-    movie_data = _transform_movie(raw)
-    movie_row = upsert_movie(movie_data)
+    movie_row = upsert_movie(_transform_movie(raw))
     movie_db_id = movie_row.get("id")
-
     if not movie_db_id:
         return None
 
     # Sync cast
-    credits = raw.get("credits", {})
-    cast = credits.get("cast", [])[:20]  # top 20 cast members
-    crew = credits.get("crew", [])
-
-    # Director(s)
-    directors = [c for c in crew if c.get("job") == "Director"]
-    for director in directors[:2]:
-        person_data = _transform_person(director)
-        person_row = upsert_person(person_data)
-        if person_row.get("id"):
-            upsert_movie_cast(movie_db_id, person_row["id"], {
-                "role_type": "Director",
-                "cast_order": 0,
-            })
-
-    # Cast members
+    cast = raw.get("cast", [])[:20]
     for i, member in enumerate(cast):
-        person_data = _transform_person(member)
-        person_row = upsert_person(person_data)
+        person_row = upsert_person(_build_person_data(tmdb_id, member))
         if person_row.get("id"):
             upsert_movie_cast(movie_db_id, person_row["id"], {
                 "character_name": member.get("character"),
-                "role_type": "Lead" if i < 3 else "Supporting",
-                "cast_order": i + 1,
+                "role_type":      "Lead" if i < 3 else "Supporting",
+                "cast_order":     i + 1,
             })
 
     polite_delay(0.25)
@@ -209,40 +183,20 @@ def sync_show(tmdb_id: int) -> dict | None:
     if not raw:
         return None
 
-    show_data = _transform_show(raw)
-    show_row = upsert_show(show_data)
+    show_row = upsert_show(_transform_show(raw))
     show_db_id = show_row.get("id")
-
     if not show_db_id:
         return None
 
-    # Sync cast from aggregate credits
-    credits = raw.get("aggregate_credits", raw.get("credits", {}))
-    cast = credits.get("cast", [])[:20]
-    crew = credits.get("crew", [])
-
-    # Director(s) / Creator(s)
-    creators = raw.get("created_by", [])
-    for creator in creators[:2]:
-        person_data = _transform_person(creator)
-        person_row = upsert_person(person_data)
-        if person_row.get("id"):
-            upsert_show_cast(show_db_id, person_row["id"], {
-                "role_type": "Director",
-                "cast_order": 0,
-            })
-
-    # Cast members
+    # Sync cast — already normalized by tmdb.py
+    cast = raw.get("cast", [])[:20]
     for i, member in enumerate(cast):
-        person_data = _transform_person(member)
-        person_row = upsert_person(person_data)
+        person_row = upsert_person(_build_person_data(tmdb_id, member))
         if person_row.get("id"):
-            roles = member.get("roles", [{}])
-            character = roles[0].get("character") if roles else member.get("character")
             upsert_show_cast(show_db_id, person_row["id"], {
-                "character_name": character,
-                "role_type": "Main Role" if i < 5 else "Support Role",
-                "cast_order": i + 1,
+                "character_name": member.get("character"),
+                "role_type":      "Main Role" if i < 5 else "Support Role",
+                "cast_order":     i + 1,
             })
 
     polite_delay(0.25)
@@ -275,8 +229,7 @@ def sync_tmdb_flow(
             movie_ids = movie_ids[:movie_limit]
         logger.info(f"Syncing {len(movie_ids)} Korean movies...")
 
-        synced = 0
-        failed = 0
+        synced = failed = 0
         for id_batch in batch(movie_ids, size=50):
             for tmdb_id in id_batch:
                 result = sync_movie(tmdb_id)
@@ -284,7 +237,7 @@ def sync_tmdb_flow(
                     synced += 1
                 else:
                     failed += 1
-            polite_delay(1.0)  # pause between batches
+            polite_delay(1.0)
 
         logger.info(f"Movies: {synced} synced, {failed} failed")
 
@@ -294,8 +247,7 @@ def sync_tmdb_flow(
             show_ids = show_ids[:show_limit]
         logger.info(f"Syncing {len(show_ids)} Korean TV shows...")
 
-        synced = 0
-        failed = 0
+        synced = failed = 0
         for id_batch in batch(show_ids, size=50):
             for tmdb_id in id_batch:
                 result = sync_show(tmdb_id)
