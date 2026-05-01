@@ -345,17 +345,24 @@ def get_drama_details(slug: str) -> dict:
                 details[key] = value
     result["details"] = details
 
-    # Native title: from details or direct li
+    # Native title: plain text after the "Native Title:" label
     native_li = soup.find("b", string=lambda t: t and "Native Title" in t)
     if native_li:
         native_parent = native_li.find_parent("li")
         if native_parent:
-            native_a = native_parent.select_one("a")
-            result["native_title"] = native_a.get_text(strip=True) if native_a else None
+            # Remove the bold label text and get remaining text
+            label = native_li.get_text(strip=True)
+            full_text = native_parent.get_text(strip=True)
+            native_text = full_text.replace(label, "").strip().lstrip(":").strip()
+            result["native_title"] = native_text if native_text else None
         else:
             result["native_title"] = None
     else:
         result["native_title"] = None
+    
+    # Fallback: pull native_title from details dict if direct parse failed
+    if not result.get("native_title") and result.get("details", {}).get("native_title"):
+        result["native_title"] = result["details"]["native_title"]
 
     # Genres: <li class="list-item p-a-0 show-genres">
     genres_li = soup.select_one("li.show-genres")
@@ -391,19 +398,31 @@ def get_drama_details(slug: str) -> dict:
     wts_box = soup.select_one("div.wts")
     if wts_box:
         for col in wts_box.select("div.col-xs-12"):
-            service_name = col.select_one("b")
-            service_type = col.select_one("div:last-child")
             link_tag = col.select_one("a[href*='redirect']")
-            if service_name and link_tag:
-                href = link_tag.get("href", "")
-                match = re.search(r"[?&]q=([^&]+)", href)
-                from urllib.parse import unquote
-                watch_url = unquote(match.group(1)) if match else href
-                watch_services.append({
-                    "service": service_name.get_text(strip=True),
-                    "type": service_type.get_text(strip=True) if service_type else None,
-                    "url": watch_url,
-                })
+            if not link_tag:
+                continue
+            # Service name: text directly inside the <b> tag only
+            service_b = col.select_one("b")
+            service_name = service_b.get_text(strip=True) if service_b else link_tag.get_text(strip=True)
+            # Type: look for span or small tag with subscription type
+            # Type is plain text in the last div, after removing the service name
+            all_text = col.get_text(strip=True)
+            service_type = None
+            for keyword in ["Subscription", "Free", "Rent", "Buy"]:
+                if keyword.lower() in all_text.lower():
+                    service_type = keyword
+                    break
+            
+            # URL
+            href = link_tag.get("href", "")
+            match = re.search(r"[?&]q=([^&]+)", href)
+            from urllib.parse import unquote
+            watch_url = unquote(match.group(1)) if match else href
+            watch_services.append({
+                "service": service_name,
+                "type": service_type,
+                "url": watch_url,
+            })
     result["where_to_watch"] = watch_services
 
     return result
