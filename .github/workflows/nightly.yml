@@ -1,0 +1,91 @@
+name: Nightly Sync
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 2am UTC daily (11pm ET / 8pm PT)
+  workflow_dispatch:        # allows manual trigger from GitHub UI
+
+env:
+  TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+  KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  sync-tmdb:
+    name: Sync TMDB
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run TMDB sync (200 movies + 200 shows)
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_tmdb import sync_tmdb_flow
+sync_tmdb_flow(movie_limit=200, show_limit=200)
+"
+
+  sync-mdl:
+    name: Sync MyDramaList
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: sync-tmdb
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run MDL sync
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_mydramalist import sync_mdl_flow
+sync_mdl_flow(limit=100)
+"
+
+  sync-naver-tv:
+    name: Sync Naver TV (airing shows only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: sync-mdl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run Naver TV sync
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_naver_tv import sync_naver_tv_flow
+sync_naver_tv_flow(only_airing=True)
+"

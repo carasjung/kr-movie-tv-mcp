@@ -1,0 +1,139 @@
+name: Initial Population (Run Once)
+
+on:
+  workflow_dispatch:        # manual trigger only — never runs automatically
+    inputs:
+      confirm:
+        description: "Type 'yes' to confirm initial population (takes several hours)"
+        required: true
+
+env:
+  TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+  KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  populate-tmdb:
+    name: "1/6 — TMDB (all Korean movies + shows)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    if: ${{ github.event.inputs.confirm == 'yes' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_tmdb import sync_tmdb_flow
+sync_tmdb_flow(sync_movies=True, sync_shows=True)
+"
+
+  populate-mdl:
+    name: "2/6 — MyDramaList"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: populate-tmdb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_mydramalist import sync_mdl_flow
+sync_mdl_flow()
+"
+
+  populate-kobis:
+    name: "3/6 — KOBIS historical box office"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: populate-tmdb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_kobis import sync_kobis_flow
+sync_kobis_flow(mode='historical', historical_years=10)
+"
+
+  populate-naver-tv:
+    name: "4/6 — Naver TV episode ratings + OST"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: populate-mdl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_naver_tv import sync_naver_tv_flow
+sync_naver_tv_flow()
+"
+
+  populate-justwatch:
+    name: "5/6 — JustWatch streaming availability"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: populate-mdl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_justwatch import sync_justwatch_flow
+sync_justwatch_flow()
+"
+
+  populate-wikipedia:
+    name: "6a/6 — Wikipedia"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: populate-mdl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_wikipedia import sync_wikipedia_flow
+sync_wikipedia_flow()
+"
+
+  populate-awards:
+    name: "6b/6 — Awards history"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: populate-mdl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_awards import sync_awards_flow
+sync_awards_flow(years_back=10)
+"

@@ -1,0 +1,111 @@
+name: Weekly Sync
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # 6am UTC every Monday
+  workflow_dispatch:        # allows manual trigger from GitHub UI
+
+env:
+  TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+  KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  sync-kobis:
+    name: Sync KOBIS Box Office
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run KOBIS weekly sync
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_kobis import sync_kobis_flow
+sync_kobis_flow(mode='weekly')
+"
+
+  sync-justwatch:
+    name: Sync JustWatch Streaming
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: sync-kobis
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run JustWatch sync
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_justwatch import sync_justwatch_flow
+sync_justwatch_flow(limit=200)
+"
+
+  sync-wikipedia:
+    name: Sync Wikipedia
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: sync-kobis
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Wikipedia sync (new titles only)
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_wikipedia import sync_wikipedia_flow
+sync_wikipedia_flow(skip_existing=True, limit=100)
+"
+
+  sync-awards:
+    name: Sync Awards
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: sync-kobis
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run Awards sync
+        run: PYTHONPATH=. python -c "
+from pipeline.jobs.sync_awards import sync_awards_flow
+sync_awards_flow(years_back=2)
+"
