@@ -1,10 +1,10 @@
 name: Initial Population (Run Once)
 
 on:
-  workflow_dispatch:        # manual trigger only — never runs automatically
+  workflow_dispatch:
     inputs:
       confirm:
-        description: "Type 'yes' to confirm initial population (takes several hours)"
+        description: "Type 'yes' to confirm"
         required: true
 
 env:
@@ -16,7 +16,7 @@ env:
 
 jobs:
   populate-tmdb:
-    name: "1/6 — TMDB (all Korean movies + shows)"
+    name: "1/6 TMDB"
     runs-on: ubuntu-latest
     timeout-minutes: 360
     if: ${{ github.event.inputs.confirm == 'yes' }}
@@ -27,13 +27,10 @@ jobs:
           python-version: "3.12"
           cache: "pip"
       - run: pip install -r requirements.txt
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_tmdb import sync_tmdb_flow
-sync_tmdb_flow(sync_movies=True, sync_shows=True)
-"
+      - run: PYTHONPATH=. python scripts/run_initial_tmdb.py
 
   populate-mdl:
-    name: "2/6 — MyDramaList"
+    name: "2/6 MyDramaList"
     runs-on: ubuntu-latest
     timeout-minutes: 360
     needs: populate-tmdb
@@ -45,13 +42,10 @@ sync_tmdb_flow(sync_movies=True, sync_shows=True)
           cache: "pip"
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_mydramalist import sync_mdl_flow
-sync_mdl_flow()
-"
+      - run: PYTHONPATH=. python scripts/run_initial_mdl.py
 
   populate-kobis:
-    name: "3/6 — KOBIS historical box office"
+    name: "3/6 KOBIS historical"
     runs-on: ubuntu-latest
     timeout-minutes: 360
     needs: populate-tmdb
@@ -62,13 +56,10 @@ sync_mdl_flow()
           python-version: "3.12"
           cache: "pip"
       - run: pip install -r requirements.txt
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_kobis import sync_kobis_flow
-sync_kobis_flow(mode='historical', historical_years=10)
-"
+      - run: PYTHONPATH=. python scripts/run_initial_kobis.py
 
   populate-naver-tv:
-    name: "4/6 — Naver TV episode ratings + OST"
+    name: "4/6 Naver TV"
     runs-on: ubuntu-latest
     timeout-minutes: 360
     needs: populate-mdl
@@ -80,13 +71,10 @@ sync_kobis_flow(mode='historical', historical_years=10)
           cache: "pip"
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_naver_tv import sync_naver_tv_flow
-sync_naver_tv_flow()
-"
+      - run: PYTHONPATH=. python scripts/run_initial_naver_tv.py
 
   populate-justwatch:
-    name: "5/6 — JustWatch streaming availability"
+    name: "5/6 JustWatch"
     runs-on: ubuntu-latest
     timeout-minutes: 360
     needs: populate-mdl
@@ -98,13 +86,10 @@ sync_naver_tv_flow()
           cache: "pip"
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_justwatch import sync_justwatch_flow
-sync_justwatch_flow()
-"
+      - run: PYTHONPATH=. python scripts/run_initial_justwatch.py
 
   populate-wikipedia:
-    name: "6a/6 — Wikipedia"
+    name: "6a/6 Wikipedia"
     runs-on: ubuntu-latest
     timeout-minutes: 360
     needs: populate-mdl
@@ -115,13 +100,10 @@ sync_justwatch_flow()
           python-version: "3.12"
           cache: "pip"
       - run: pip install -r requirements.txt
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_wikipedia import sync_wikipedia_flow
-sync_wikipedia_flow()
-"
+      - run: PYTHONPATH=. python scripts/run_initial_wikipedia.py
 
   populate-awards:
-    name: "6b/6 — Awards history"
+    name: "6b/6 Awards"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: populate-mdl
@@ -133,7 +115,4 @@ sync_wikipedia_flow()
           cache: "pip"
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - run: PYTHONPATH=. python -c "
-from pipeline.jobs.sync_awards import sync_awards_flow
-sync_awards_flow(years_back=10)
-"
+      - run: PYTHONPATH=. python scripts/run_initial_awards.py
