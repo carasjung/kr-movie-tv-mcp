@@ -209,8 +209,8 @@ def sync_show(tmdb_id: int) -> dict | None:
 def sync_tmdb_flow(
     sync_movies: bool = True,
     sync_shows: bool = True,
-    movie_limit: int = None,
-    show_limit: int = None,
+    movie_limit: int | None = None,
+    show_limit: int | None = None,
 ):
     """
     Main TMDB sync flow. Fetches all Korean movies and TV shows.
