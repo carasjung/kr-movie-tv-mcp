@@ -137,7 +137,7 @@ def sync_show_naver_data(show: dict) -> bool:
 
 
 @flow(name="sync_naver_tv", log_prints=True)
-def sync_naver_tv_flow(limit: int = None, only_airing: bool = False):
+def sync_naver_tv_flow(limit: int | None = None, only_airing: bool = False):
     """
     Main Naver TV sync flow.
 
