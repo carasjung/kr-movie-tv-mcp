@@ -65,8 +65,7 @@ def _transform_show(card: dict, details: dict = None) -> dict:
             "tags":            normalize_tags(details.get("tags", [])),
             "network":         raw_details.get("original_network"),
             "first_air_date":  parse_date(raw_details.get("aired", "").split("-")[0].strip()) if raw_details.get("aired") else None,
-            "last_air_date":   parse_date(raw_details.get("aired", "").split("-")[-1].strip()) if raw_details.get("aired") else None,
-            "content_rating":  raw_details.get("content_rating"),
+            "last_air_date":   parse_date(raw_details.get("aired", "").split("-")[-1].strip()) if raw_details.get("aired") else None
         })
 
         # Status from details
