@@ -45,7 +45,7 @@ def _get_shows_with_korean_titles() -> list[dict]:
     return result.data or []
 
 
-def _transform_episodes(show_id: str, episodes: list[dict], show_year: int = None) -> list[dict]:
+def _transform_episodes(show_id: str, episodes: list[dict], show_year: int | None = None) -> list[dict]:
     """Transform Naver episode data into DB schema."""
     rows = []
     for ep in episodes:

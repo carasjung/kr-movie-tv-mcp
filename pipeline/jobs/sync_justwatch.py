@@ -44,7 +44,7 @@ def _get_all_titles() -> dict:
     return {"movies": movies, "shows": shows}
 
 
-def _transform_offers(offers: list[dict], movie_id: str = None, show_id: str = None) -> list[dict]:
+def _transform_offers(offers: list[dict], movie_id: str | None = None, show_id: str | None = None) -> list[dict]:
     """Transform JustWatch streaming offers into DB schema rows."""
     rows = []
     for offer in offers:
@@ -69,8 +69,8 @@ def sync_title_streaming(
     title: str,
     content_type: str,
     db_id: str,
-    justwatch_slug: str = None,
-    year: int = None,
+    justwatch_slug: str | None = None,
+    year: int | None = None,
 ) -> int:
     """
     Sync streaming availability for one title across all regions.
@@ -119,7 +119,7 @@ def sync_title_streaming(
 
 @flow(name="sync_justwatch", log_prints=True)
 def sync_justwatch_flow(
-    limit: int = None,
+    limit: int | None = None,
     sync_movies: bool = True,
     sync_shows: bool = True,
 ):

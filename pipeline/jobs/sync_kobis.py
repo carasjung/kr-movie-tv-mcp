@@ -73,7 +73,7 @@ def _transform_boxoffice_row(raw: dict, week_start: str, period_type: str) -> di
 
 
 @task(retries=3, retry_delay_seconds=10)
-def sync_weekly_boxoffice(target_date: str = None) -> int:
+def sync_weekly_boxoffice(target_date: str | None = None) -> int:
     """
     Sync weekly box office rankings from KOBIS.
 
@@ -100,7 +100,7 @@ def sync_weekly_boxoffice(target_date: str = None) -> int:
 
 
 @task(retries=3, retry_delay_seconds=10)
-def sync_daily_boxoffice(target_date: str = None) -> int:
+def sync_daily_boxoffice(target_date: str | None = None) -> int:
     """Sync daily box office rankings from KOBIS."""
     from datetime import datetime
     day = target_date or datetime.now().strftime("%Y%m%d")
@@ -152,7 +152,7 @@ def sync_historical_boxoffice(years_back: int = 10) -> int:
 def sync_kobis_flow(
     mode: str = "weekly",
     historical_years: int = 10,
-    target_date: str = None,
+    target_date: str | None = None,
 ):
     """
     Main KOBIS sync flow.

@@ -65,7 +65,8 @@ def _transform_show(card: dict, details: dict = None) -> dict:
             "tags":            normalize_tags(details.get("tags", [])),
             "network":         raw_details.get("original_network"),
             "first_air_date":  parse_date(raw_details.get("aired", "").split("-")[0].strip()) if raw_details.get("aired") else None,
-            "last_air_date":   parse_date(raw_details.get("aired", "").split("-")[-1].strip()) if raw_details.get("aired") else None
+            "last_air_date":   parse_date(raw_details.get("aired", "").split("-")[-1].strip()) if raw_details.get("aired") else None,
+            "content_rating":  raw_details.get("content_rating"),
         })
 
         # Status from details
@@ -141,7 +142,7 @@ def sync_mdl_show(card: dict) -> dict | None:
 
 
 @flow(name="sync_mydramalist", log_prints=True)
-def sync_mdl_flow(limit: int = None):
+def sync_mdl_flow(limit: int | None = None):
     """
     Main MDL sync flow.
 

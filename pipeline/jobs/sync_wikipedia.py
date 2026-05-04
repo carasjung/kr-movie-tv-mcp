@@ -31,8 +31,8 @@ def sync_title_wikipedia(
     title: str,
     db_id: str,
     content_type: str,
-    year: int = None,
-    wikipedia_title: str = None,
+    year: int | None = None,
+    wikipedia_title: str | None = None,
 ) -> bool:
     """Fetch and sync Wikipedia sections for one title."""
     sections = MOVIE_SECTIONS if content_type == "movie" else SHOW_SECTIONS
@@ -77,7 +77,7 @@ def sync_title_wikipedia(
 
 @flow(name="sync_wikipedia", log_prints=True)
 def sync_wikipedia_flow(
-    limit: int = None,
+    limit: int | None = None,
     sync_movies: bool = True,
     sync_shows: bool = True,
     skip_existing: bool = True,
