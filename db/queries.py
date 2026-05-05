@@ -397,7 +397,15 @@ def upsert_ost_album(show_id: str, data: dict) -> dict:
 
 def upsert_ost_albums_bulk(show_id: str, albums: list[dict]) -> list[dict]:
     """Bulk upsert all OST albums for a show."""
-    rows = [{"show_id": show_id, **_clean(a)} for a in albums]
+    # Deduplicate by album_name to avoid ON CONFLICT affecting same row twice
+    seen = set()
+    unique_albums = []
+    for a in albums:
+        key = a.get("album_name", "")
+        if key not in seen:
+            seen.add(key)
+            unique_albums.append(a)
+    rows = [{"show_id": show_id, **_clean(a)} for a in unique_albums]
     result = _supabase.table("ost_albums").upsert(
         rows,
         on_conflict="show_id,album_name"

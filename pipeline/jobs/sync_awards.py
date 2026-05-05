@@ -177,7 +177,7 @@ def sync_baeksang_year(year: int) -> int:
 def sync_awards_flow(
     years_back: int = 10,
     include_baeksang: bool = True,
-    ceremony_keys: list[str] = None,
+    ceremony_keys: list[str] | None = None,
 ):
     """
     Main awards sync flow.
