@@ -342,9 +342,21 @@ def upsert_streaming(data: dict) -> dict:
 
 
 def upsert_streaming_bulk(rows: list[dict]) -> list[dict]:
-    """Bulk upsert streaming availability rows."""
+    seen = set()
+    unique_rows = []
+    for r in rows:
+        key = (
+            str(r.get("movie_id") or ""),
+            str(r.get("show_id") or ""),
+            r.get("region", ""),
+            r.get("provider", ""),
+            r.get("monetization_type") or "",
+        )
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(r)
     result = _supabase.table("streaming_availability").upsert(
-        [_clean(r) for r in rows],
+        [_clean(r) for r in unique_rows],
         on_conflict="movie_id,show_id,region,provider,monetization_type"
     ).execute()
     return result.data or []
