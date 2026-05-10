@@ -22,10 +22,7 @@ Tools:
 
 import os
 from fastmcp import FastMCP
-from fastmcp.server.auth import RemoteAuthProvider
-from fastmcp.server.auth.providers.jwt import JWTVerifier
-from pydantic import AnyHttpUrl
-from descope_mcp import DescopeMCP
+from fastmcp.server.auth.providers.descope import DescopeProvider
 from db.queries import (
     get_movie_by_tmdb_id,
     get_movie_by_title,
@@ -52,21 +49,9 @@ from db.queries import (
 )
 
 # Initialize Descope auth
-_descope = DescopeMCP(
-    well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
-    mcp_server_url=os.environ.get("MCP_SERVER_URL"),
-)
-
-_token_verifier = JWTVerifier(
-    well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
-    audience=os.environ.get("MCP_SERVER_URL"),
-)
-
-_auth = RemoteAuthProvider(
-    token_verifier=_token_verifier,
-    authorization_servers=[AnyHttpUrl(os.environ["DESCOPE_WELL_KNOWN_URL"].replace(
-        "/.well-known/openid-configuration", ""
-    ))],
+_auth = DescopeProvider(
+    config_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
+    base_url=os.environ["MCP_SERVER_URL"],
 )
 
 mcp = FastMCP(
