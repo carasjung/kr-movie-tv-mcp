@@ -26,7 +26,7 @@ from fastmcp.server.auth import RemoteAuthProvider
 from descope_mcp import DescopeMCP
 from db.queries import (
     get_movie_by_tmdb_id,
-    get_movie_by_title,auth=BearerAuthProvider(
+    get_movie_by_title,
     get_movies,
     get_show_by_tmdb_id,
     get_show_by_title,
