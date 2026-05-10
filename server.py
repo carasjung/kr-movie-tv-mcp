@@ -22,11 +22,11 @@ Tools:
 
 import os
 from fastmcp import FastMCP
-from fastmcp.server.auth import BearerAuthProvider
+from fastmcp.server.auth import RemoteAuthProvider
 from descope_mcp import DescopeMCP
 from db.queries import (
     get_movie_by_tmdb_id,
-    get_movie_by_title,
+    get_movie_by_title,auth=BearerAuthProvider(
     get_movies,
     get_show_by_tmdb_id,
     get_show_by_title,
@@ -57,7 +57,7 @@ _descope = DescopeMCP(
 
 mcp = FastMCP(
     name="Korean Entertainment",
-    auth=BearerAuthProvider(
+    auth=RemoteAuthProvider(
         well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
         audience=os.environ.get("MCP_SERVER_URL"),
     ),
