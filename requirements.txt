@@ -5,4 +5,5 @@ requests
 python-dotenv
 supabase
 prefect
-tmdbsimple
+fastmcp
+descope-mcp

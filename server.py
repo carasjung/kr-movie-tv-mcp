@@ -2,22 +2,28 @@
 server.py — Korean Entertainment MCP Server
 
 Exposes the Korean entertainment database as MCP tools for AI agents.
-Built with FastMCP. Reads from Supabase via the db/queries.py layer.
+Built with FastMCP + Descope OAuth 2.1 auth.
 
-Install: pip install fastmcp
-Run:     python server.py
-Test:    fastmcp dev server.py
+Environment variables required:
+    SUPABASE_URL
+    SUPABASE_ANON_KEY
+    SUPABASE_SERVICE_ROLE_KEY
+    DESCOPE_WELL_KNOWN_URL
+    MCP_SERVER_URL  (your Railway public URL e.g. https://kr-mcp.up.railway.app)
 
 Tools:
   Discovery:  search_titles, get_trending_dramas, get_top_dramas,
               get_top_movies, browse_by_genre, browse_by_tag
   Detail:     get_movie, get_drama, get_cast, get_episode_ratings,
               get_ost_albums
-  Utility:    find_where_to_watch, get_weekly_boxoffice,
-              get_actor_filmography, get_awards
+  Utility:    find_where_to_watch, find_by_provider, get_weekly_boxoffice,
+              get_actor_filmography, get_awards, compare_ratings
 """
 
+import os
 from fastmcp import FastMCP
+from fastmcp.server.auth import BearerAuthProvider
+from descope_mcp import DescopeMCP
 from db.queries import (
     get_movie_by_tmdb_id,
     get_movie_by_title,
@@ -43,8 +49,18 @@ from db.queries import (
     _supabase,
 )
 
+# Initialize Descope auth
+_descope = DescopeMCP(
+    well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
+    mcp_server_url=os.environ.get("MCP_SERVER_URL"),
+)
+
 mcp = FastMCP(
     name="Korean Entertainment",
+    auth=BearerAuthProvider(
+        well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
+        audience=os.environ.get("MCP_SERVER_URL"),
+    ),
     instructions="""
 You have access to a comprehensive database of Korean movies and TV shows,
 built from 10 sources: TMDB, KOBIS box office, MyDramaList, HanCinema,
@@ -860,4 +876,9 @@ def compare_ratings(title: str, content_type: str = "drama") -> dict:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    port = int(os.environ.get("PORT", 8000))
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=port,
+    )
