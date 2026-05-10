@@ -23,6 +23,8 @@ Tools:
 import os
 from fastmcp import FastMCP
 from fastmcp.server.auth import RemoteAuthProvider
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+from pydantic import AnyHttpUrl
 from descope_mcp import DescopeMCP
 from db.queries import (
     get_movie_by_tmdb_id,
@@ -55,12 +57,21 @@ _descope = DescopeMCP(
     mcp_server_url=os.environ.get("MCP_SERVER_URL"),
 )
 
+_token_verifier = JWTVerifier(
+    well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
+    audience=os.environ.get("MCP_SERVER_URL"),
+)
+
+_auth = RemoteAuthProvider(
+    token_verifier=_token_verifier,
+    authorization_servers=[AnyHttpUrl(os.environ["DESCOPE_WELL_KNOWN_URL"].replace(
+        "/.well-known/openid-configuration", ""
+    ))],
+)
+
 mcp = FastMCP(
     name="Korean Entertainment",
-    auth=RemoteAuthProvider(
-        well_known_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
-        audience=os.environ.get("MCP_SERVER_URL"),
-    ),
+    auth=_auth,
     instructions="""
 You have access to a comprehensive database of Korean movies and TV shows,
 built from 10 sources: TMDB, KOBIS box office, MyDramaList, HanCinema,
