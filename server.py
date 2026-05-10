@@ -81,6 +81,19 @@ Tips:
 """,
 )
 
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+@mcp.custom_route("/.well-known/oauth-protected-metadata", methods=["GET"])
+async def oauth_metadata(request: Request) -> JSONResponse:
+    return JSONResponse({
+        "resource": "https://kr-movie-tv-mcp-production.up.railway.app/mcp",
+        "authorization_servers": [
+            "https://api.descope.com/v1/apps/agentic/P3DVwYR2mZLFjsY4msqlW0HIfYUR/MS3DVwdTMGdvPzckaY6wDNwPgoGxa"
+        ],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": []
+    })
 
 # ── Discovery Tools ────────────────────────────────────────────────────────────
 
