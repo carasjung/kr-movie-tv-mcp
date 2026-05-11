@@ -1,248 +1,262 @@
-# Korean Movies & TV Data Pipeline
+# Korean Entertainment MCP Server
 
-This repository builds and maintains a **multi-source database of Korean film and television** by ingesting public data from **English- and Korean-facing sources**—a mix of **official REST APIs**, **structured open APIs**, and **browser-backed scraping** where sites are JS-heavy or expose no stable API. Everything is normalized into one schema and written to **Supabase**.
+A production-grade MCP (Model Context Protocol) server for Korean movies and TV shows, built from 10 data sources and deployed with OAuth 2.1 authentication via Descope.
 
-**Scheduling**: Production runs use **GitHub Actions** only (cron + manual dispatch). Hosted workflow orchestrators were considered, but **Prefect Cloud-style hosting would have meant ongoing cost**, so this project standardizes on free CI minutes + repository secrets instead.
-
-A **MCP-oriented read layer** fits naturally on top: `db/queries.py` is documented as what an MCP server would call for reads, while ingestion uses the service role for writes.
+**Live endpoint:** `https://kr-movie-tv-mcp-production.up.railway.app/mcp`
 
 ---
 
-## Problem this project solves
+## What This Does
 
-- **Fragmentation**: The same title might appear under English marketing names, 한글 극장/방송 명칭, romanization variants, TMDB IDs, and domestic ticketing or portal IDs. Data quality comes from deliberately **triangulating** multiple languages and ecosystems—not from a single “Korean Netflix” dump.
-- **Stale data**: Airing schedules, Nielsen-style episode ratings, MDL scores, weekly box office, and streaming catalogs all drift daily or weekly; the answer is **repeatable ingestion**, not one-off scraping.
-- **Consistent spine**: **TMDB** seeds core **movies** and **tv_shows** (`tmdb_id` upserts). Korean-official (**KOBIS**) and Korean-portal (**Naver**) layers attach domestic truth; fan and international portals (**MyDramaList**) and aggregators (**JustWatch**) add audience and availability angles; **Wikipedia** adds long-form English context.
+The server exposes 17 tools that let AI agents query a unified Korean entertainment database — combining data that previously required visiting 6+ separate websites:
 
-The intended outcome is a **queryable, incrementally updated** store suitable for recommendations, research, or tooling—without tying everything to manual laptop runs.
-
----
-
-## Data sourcing: English vs Korean, API vs scrape
-
-Rough cut of **language / audience posture** versus **technical access**:
-
-| Source | Audience / language skew | Access | Why it’s in the mix |
-|--------|---------------------------|--------|---------------------|
-| **TMDB** | Global; metadata often English-first | Stable **REST API** + API key | Broad coverage, IDs, genres, posters, cast—best **canonical join key** (`tmdb_id`) for films and series. |
-| **KOFIC / KOBIS** | Korea official film industry | **Open API** (keyed) | **Authoritative Korean box office** (admissions, ranks, screens)—not reproducible from English fan wikis. |
-| **Naver** (search / TV aggregation) | Korea domestic portal; **Korean UI** | **Scraping** (Playwright) | Episode-level **시청률** and OST linkage—data types called out explicitly in [`data_sources/naver_tv.py`](data_sources/naver_tv.py) as poorly available elsewhere. |
-| **MyDramaList** | International K-drama fans; English-heavy | **Scraping** (Playwright) | Strong for **genre tags, MDL ratings, airing status**, and discovery URLs when matched back to TMDB-backed rows. |
-| **JustWatch** | Territory-specific availability UI | **Scraping** (Playwright) | **Where-to-watch** by region/provider; inherently UI-driven. |
-| **Wikipedia** (English) | Long-form encyclopedic English | **MediaWiki REST** + courteous `User-Agent` | Plot and sectioned article text [`data_sources/wikipedia.py`](data_sources/wikipedia.py) for richer context than one-line TMDB overviews. |
-| **Awards** | Mixed; ceremony sites vary | HTTP + Playwright depending on site | Structured **award / nominee rows** tied to titles when linkage resolves. |
-
-**Deliberately bilingual Korean + English sourcing** avoids two common traps: English-only catalogs that quietly drop domestic-only releases or use wrong romanization, and Korean-only portals that never attach the global ID graph your product needs (`tmdb_id`, cast, images).
-
-Additional modules exist for experiments or future enrichment (e.g. [`data_sources/hancinema.py`](data_sources/hancinema.py), [`data_sources/rottentomatoes.py`](data_sources/rottentomatoes.py), empty job stubs)—they are **not** on the current GitHub schedules unless you wire them.
-
-### Challenges that showed up with this mix
-
-- **Stable identifiers**: Korean portals use internal IDs (**e.g. Naver `os=` show id**) that are not TMDB IDs. The pipeline persists multiple foreign keys (`mdl_id`, `naver_show_id`, `kobis_movie_code`, …—see [`db/models.py`](db/models.py)) and resolves links when ingestion order and title matching allow.
-- **Sites that refuse “simple HTTP”**: Naver and MDL are **JavaScript-rendered**; `requests` + BeautifulSoup alone are insufficient. **Playwright in CI** (each workflow installs Chromium before scraper jobs—see [nightly.yml](.github/workflows/nightly.yml)) trades reliability for cold start time and runner complexity.
-- **Brittle selectors**: Scrapers break when markup or A/B tests change. Keeping fetch logic in **`data_sources/`** (thin) separate from **`pipeline/jobs/`** (business rules + DB mapping) limits the blast radius when a site moves a div.
-- **Date and rating semantics**: Episode air dates may omit years; ratings differ by audience (ticket buyers vs netizens vs MDL stars vs TMDB 10‑point). The schema uses **explicit per-source rating column names** to avoid bogus “average of averages.”
-- **Rate limits & etiquette**: APIs (TMDB, KOBIS, Wikipedia) have documented limits; scrapers rely on delays and retries ([`pipeline/utils.py`](pipeline/utils.py)). Production batch sizes are tuned partly around **being polite** and partly around GitHub job timeouts.
+- Korean and international ratings (Nielsen Korea, Naver, MDL, TMDB, Rotten Tomatoes)
+- Per-episode Nielsen Korea viewership trajectories
+- JustWatch streaming availability across US/UK/CA/AU
+- KOBIS official Korean box office rankings
+- Award history across 5 major Korean ceremonies
+- OST albums with Naver Vibe links
+- Cast filmographies with Korean name lookup
 
 ---
 
-## Architecture (high level)
+## MCP Tools
 
-```mermaid
-flowchart LR
-  subgraph sources [Data sources]
-    TMDB[TMDB API]
-    KOBIS[KOBIS API]
-    MDL[MyDramaList]
-    Naver[Naver TV]
-    JW[JustWatch]
-    Wiki[Wikipedia API]
-    Awards[Award sites]
-  end
+### Discovery
+| Tool | Description |
+|---|---|
+| `search_titles` | Search movies and dramas by English or Korean title |
+| `get_trending_dramas` | Currently airing dramas sorted by MDL rating |
+| `get_top_dramas` | All-time best completed dramas, filterable by genre |
+| `get_top_movies` | Best Korean films, filterable by genre/year/rating |
+| `browse_by_genre` | Filter by genre for movies or dramas |
+| `browse_by_tag` | Filter dramas by MDL community tags (Bromance, Time Travel, Revenge, etc.) |
 
-  subgraph workers [Python pipeline]
-    DS[data_sources/*]
-    JOBS[pipeline/jobs/*]
-    DS --> JOBS
-  end
+### Detail
+| Tool | Description |
+|---|---|
+| `get_movie` | Full movie details with all 5 rating sources |
+| `get_drama` | Full drama details with all rating sources |
+| `get_cast` | Cast list with character names and role types |
+| `get_episode_ratings` | Nielsen Korea per-episode viewership % |
+| `get_ost_albums` | OST albums with Naver Vibe streaming links |
 
-  subgraph storage [Storage]
-    SB[(Supabase PostgreSQL)]
-  end
+### Utility
+| Tool | Description |
+|---|---|
+| `find_where_to_watch` | Streaming availability by title + region |
+| `find_by_provider` | All Korean content on Netflix/Viki/etc. in a region |
+| `get_weekly_boxoffice` | KOBIS Korean box office rankings |
+| `get_actor_filmography` | Full filmography for an actor or director |
+| `get_awards` | Award history for a title or full ceremony year |
+| `compare_ratings` | Side-by-side rating comparison across all sources |
 
-  TMDB --> DS
-  KOBIS --> DS
-  MDL --> DS
-  Naver --> DS
-  JW --> DS
-  Wiki --> DS
-  Awards --> DS
-  JOBS --> SB
+---
+
+## Data Sources
+
+### 1. TMDB — Official API
+Core metadata for all Korean movies and TV shows — titles, cast, genres, ratings, poster images. Seeds the database with ~9,983 movies and ~3,500+ shows.
+
+### 2. KOBIS (Korean Film Council) — Official API
+Official Korean weekly and daily box office rankings, cumulative admissions, sales revenue, screen counts. The only source for authoritative Korean theatrical data.
+
+### 3. MyDramaList — Web Scraper (Playwright)
+Community ratings, episode counts, airing status, and uniquely: community-generated tags ("Bromance", "Time Travel", "CEO Male Lead"). No other source has structured K-drama tags.
+
+### 4. HanCinema — Web Scraper (Playwright)
+Historical Korean film and drama metadata, including older content not covered by TMDB.
+
+### 5. Naver Movies — Web Scraper (Playwright)
+Two unique Korean-audience ratings for films:
+- **실관람객 평점** (Verified ticket buyer rating) — linked to actual cinema purchases
+- **네티즌 평점** (Netizen rating) — Korean general public
+
+### 6. Naver TV — Web Scraper (Playwright)
+Per-episode Nielsen Korea viewership ratings extracted from SVG chart elements. No English-language source has this data. Also scrapes OST albums from Naver Vibe.
+
+### 7. JustWatch — Web Scraper (Playwright)
+Where-to-watch data across 364+ providers in US, UK, CA, AU — including monetization type, price, and quality.
+
+### 8. Wikipedia — Official REST API
+Plot summaries, production background, critical reception sections. Section alias system handles non-standard article names.
+
+### 9. Awards — Web Scrapers (httpx + Playwright)
+Five major Korean award ceremonies:
+- KBS, MBC, SBS Drama Awards (from AsianWiki)
+- Blue Dragon Film Awards + Blue Dragon Series Awards (OTT)
+- Baeksang Arts Awards (from official site)
+
+### 10. KMDb — Pending API approval
+
+---
+
+## Database Schema
+
+Built on **Supabase** (PostgreSQL), free tier.
+
+### 11 Tables
+
+| Table | Description |
+|---|---|
+| `movies` | ~9,983 Korean films with all cross-source IDs and ratings |
+| `tv_shows` | ~3,500+ Korean dramas with MDL/Naver/TMDB data |
+| `people` | Actors and directors (shared lookup) |
+| `movie_cast` | Movie-person relationships |
+| `show_cast` | Show-person relationships |
+| `episodes` | Per-episode Nielsen Korea ratings |
+| `ost_albums` | Drama OST albums with Vibe links |
+| `awards` | Award winners across 5 ceremonies |
+| `award_nominees` | Nominees per award category |
+| `streaming_availability` | Per title/region/provider streaming rows |
+| `boxoffice` | Weekly KOBIS box office data |
+
+### Rating Field Naming Convention
+
+All rating fields are explicitly named by source:
+
+```sql
+tmdb_rating              -- Global community (0-10)
+mdl_rating               -- International K-drama fans (0-10)
+naver_audience_rating    -- Korean verified ticket buyers (0-10)
+naver_netizen_rating     -- Korean general public (0-10)
+naver_latest_rating      -- Nielsen Korea latest episode (%)
+naver_highest_rating     -- Nielsen Korea peak episode (%)
+rt_tomatometer           -- Western professional critics (0-100%)
+rt_audience_score        -- Western RT users (0-100%)
 ```
 
-- **`data_sources/`**: Low-level fetchers—`requests` / `httpx` for APIs, **Playwright** where the DOM is JS-driven. Keep these modules **thin** (network + parsing) so breakages are localized.
-- **`pipeline/jobs/`**: Per-source **sync jobs** that map normalized dicts into the DB shape and call `db.queries` upserts. The Python files still use **Prefect `@flow` / `@task` decorators** from an earlier design; they are **not** deployed to Prefect Cloud here—GitHub Actions simply runs the same entrypoints as plain Python processes.
-- **`db/models.py`**: Field documentation and naming conventions (source-prefixed ratings, etc.); **not** an ORM—column contracts for upserts.
-- **`db/queries.py`**: The **only** place that talks to Supabase. Writes use **upsert** so scheduled runs are idempotent.
-- **`scripts/run_*.py`**: Thin entrypoints invoked by **GitHub Actions** (and usable locally); each script calls the exported flow function for one source with CI-friendly limits.
-- **`pipeline/orchestrator.py`**: Composes multiple jobs into **initial**, **nightly**, and **weekly** sequences—handy locally; CI mostly mirrors the same ordering via separate workflow jobs and `needs:` edges.
-
 ---
 
-## Scheduled runs (GitHub Actions)
-
-**Why not a hosted orchestrator:** Prefect Cloud (or similar) would add **subscription/hosting cost** for always-on schedules and workers. **GitHub Actions** provides cron, secrets, parallelism, logs, and `workflow_dispatch` for manual reruns within the constraints of public-runner minutes and job timeouts—which is enough for this pipeline.
-
-Workflows live under [`.github/workflows/`](.github/workflows/). **Cron schedules use the default GitHub timezone: UTC.**
-
-| Workflow | Trigger | What it runs |
-|----------|---------|--------------|
-| [**Nightly Sync**](.github/workflows/nightly.yml) | `0 2 * * *` (02:00 UTC daily) + manual | TMDB → MyDramaList → Naver TV (sequential jobs) |
-| [**Weekly Sync**](.github/workflows/weekly.yml) | `0 6 * * 1` (06:00 UTC Mondays) + manual | KOBIS → then JustWatch, Wikipedia, and Awards in parallel after KOBIS |
-| [**Initial Population**](.github/workflows/initial_population.yml) | Manual only; requires input `confirm: yes` | Long-running seed: TMDB, MDL, KOBIS history, Naver TV, JustWatch, Wikipedia, Awards (see workflow for job graph) |
-
-The **nightly** chain matches the idea “fast-moving data first”: new/updated TMDB rows, MDL community and status fields, then Naver episode metrics for airing titles.
-
-The **weekly** jobs target slower-moving or heavier sources: official box office, streaming availability, Wikipedia text, and awards.
-
-**Manual runs**: Each workflow supports `workflow_dispatch`, so you can trigger a sync from the Actions tab without waiting for the cron.
-
----
-
-## GitHub repository secrets
-
-Configure these in **Settings → Secrets and variables → Actions** (names must match the workflows):
-
-| Secret | Used for |
-|--------|----------|
-| `TMDB_API_KEY` | TMDB API |
-| `KOBIS_API_KEY` | Korean Film Council (KOBIS) Open API |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_ANON_KEY` | Reserved for read-only clients (e.g. MCP); workflows currently pass it for consistency |
-| `SUPABASE_SERVICE_ROLE_KEY` | Pipeline writes (bypasses RLS); required by `db/queries.py` |
-
-**Local development**: Create a `.env` file in the repo root (gitignored) with the same variable names. `python-dotenv` loads it in `db/queries.py` and several data sources.
-
----
-
-## What lands in the database (by source)
-
-Mapping from the sourcing strategy above to **Supabase tables** (column-level detail: [`db/models.py`](db/models.py)):
-
-| Source | Primary tables / artifacts |
-|--------|----------------------------|
-| TMDB | `movies`, `tv_shows`, `people`, cast links |
-| KOBIS | Box office history linked to `movies` via `kobis_movie_code` when resolved |
-| MyDramaList | `tv_shows` enrichment (ratings, tags, status, slugs, …) |
-| Naver TV | `episodes`, OST album rows |
-| JustWatch | `streaming` (per region / provider) |
-| Wikipedia | `synopsis_full`, `wiki_sections` on movies/shows |
-| Awards | Award / nominee records + FKs to titles when matched |
-
-**Not on the current Action schedules:** [`data_sources/hancinema.py`](data_sources/hancinema.py), [`data_sources/rottentomatoes.py`](data_sources/rottentomatoes.py), and stubs [`pipeline/jobs/sync_hancinema.py`](pipeline/jobs/sync_hancinema.py) / [`sync_kmdb.py`](pipeline/jobs/sync_kmdb.py)—the schema still reserves e.g. `hancinema_slug` and Rotten Tomatoes–style columns for optional future jobs.
-
----
-
-## Database model (logical)
-
-Authoritative field lists and provenance notes are in [`db/models.py`](db/models.py). The query/upsert API is in [`db/queries.py`](db/queries.py).
-
-Core entities include:
-
-- **`movies`**, **`tv_shows`** — primary titles; upsert keys center on `tmdb_id`.
-- **`people`**, cast join tables — from TMDB credits.
-- **`episodes`** — per-show episode metrics (e.g. Naver).
-- **`streaming`** — availability by region and provider (JustWatch).
-- **`awards`** / related nominee storage — ceremony history.
-- **Box office** — KOBIS weekly/daily style history linked to films.
-
-Ratings are **named by source and audience** (e.g. `tmdb_rating` vs `mdl_rating` vs `naver_audience_rating`) to avoid mixing incompatible scales.
-
----
-
-## Repository layout
+## Architecture
 
 ```
-├── .github/workflows/     # Nightly, weekly, initial population
-├── data_sources/          # Site/API clients
+GitHub Actions (scheduling)
+    ↓
+Prefect flows (retry logic, task caching, logging)
+    ↓
+data_sources/* (Playwright + httpx + REST APIs)
+    ↓
+pipeline/utils.py (data normalization)
+    ↓
+db/queries.py (upsert operations)
+    ↓
+Supabase (PostgreSQL + PostgREST)
+    ↓
+server.py (FastMCP + Descope OAuth 2.1)
+    ↓
+Railway (always-on hosting)
+```
+
+### Sync Schedules
+
+| Job | Schedule | What it syncs |
+|---|---|---|
+| `sync_tmdb` | Nightly 2am UTC | New Korean titles, rating updates |
+| `sync_mydramalist` | Nightly 3am UTC | Airing status, MDL ratings, tags |
+| `sync_naver_tv` | Nightly 4am UTC | Episode ratings for airing shows |
+| `sync_kobis` | Weekly Monday | Korean box office |
+| `sync_justwatch` | Weekly Wednesday | Streaming availability (200 titles) |
+| `sync_wikipedia` | Weekly Thursday | Plot summaries (new titles only) |
+| `sync_awards` | Weekly Sunday | Award ceremony data |
+
+---
+
+## Repository Structure
+
+```
+kr-movie-tv-mcp/
+├── data_sources/          # One file per data source
+│   ├── tmdb.py
+│   ├── kobis.py
+│   ├── mydramalist.py
+│   ├── hancinema.py
+│   ├── naver.py
+│   ├── naver_tv.py
+│   ├── justwatch.py
+│   ├── wikipedia.py
+│   └── awards.py
 ├── db/
-│   ├── models.py          # Column contracts + documentation
-│   └── queries.py         # Supabase reads/writes
+│   ├── models.py          # Field documentation
+│   └── queries.py         # All DB read/write operations
 ├── pipeline/
-│   ├── jobs/              # Per-source sync jobs (still use Prefect decorators; GHA runs them as scripts)
-│   ├── orchestrator.py    # Composed initial / nightly / weekly runs for local use
-│   └── utils.py           # Shared parsing, delays, retries
-├── scripts/               # Entrypoints invoked by GitHub Actions + local runs
-├── tests/                 # Per-source tests
-├── requirements.txt       # Runtime deps (includes `prefect` for decorator compatibility)
-├── requirements-scraper.txt  # Pinned scraper stack (subset; CI uses requirements.txt)
-└── prefect.yaml           # Leftover project metadata; scheduling is not Prefect-driven
+│   ├── utils.py           # Shared helpers
+│   ├── orchestrator.py    # Master flow
+│   └── jobs/              # One sync job per source
+├── scripts/               # GitHub Actions runner scripts
+├── tests/                 # One test file per data source
+├── .github/workflows/
+│   ├── nightly.yml
+│   ├── weekly.yml
+│   └── initial_population.yml
+├── server.py              # FastMCP MCP server
+├── schema.sql             # Full Supabase schema
+├── railway.toml           # Railway deployment config
+└── requirements.txt
 ```
 
 ---
 
-## Local setup
+## Deployment
 
-**Requirements**: Python **3.12** (matches CI).
+### MCP Server
+- **Hosting:** Railway ($5/month, always-on)
+- **Auth:** Descope OAuth 2.1 via FastMCP `DescopeProvider`
+- **Transport:** Streamable HTTP
+- **Endpoint:** `https://kr-movie-tv-mcp-production.up.railway.app/mcp`
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-playwright install chromium   # needed for MDL, Naver TV, JustWatch, Awards jobs
-```
-
-Create `.env` with at least:
-
-- `TMDB_API_KEY`
-- `KOBIS_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-
-Run a single job from the repo root (same pattern as Actions):
-
-```bash
-PYTHONPATH=. python scripts/run_sync_tmdb.py
-PYTHONPATH=. python scripts/run_sync_mdl.py
-```
-
-To run a **multi-source chain** locally (same ordering idea as Actions, without YAML):
-
-```bash
-PYTHONPATH=. python -m pipeline.orchestrator nightly    # default if no arg
-PYTHONPATH=. python -m pipeline.orchestrator weekly
-PYTHONPATH=. python -m pipeline.orchestrator initial   # very long; prefer splitting or running scripts one by one
-```
-
-Note: Limits in `orchestrator.py` may differ slightly from the `scripts/run_*.py` entrypoints GitHub invokes—compare both when debugging parity with CI.
+### Pipeline
+- **Scheduling:** GitHub Actions (2,000 free min/month)
+- **Orchestration:** Prefect (retry logic, task caching)
+- **Database:** Supabase free tier (500MB, unlimited API requests)
 
 ---
 
-## Testing
-
-Tests live under `tests/` and are organized by source. From the project root:
+## Environment Variables
 
 ```bash
-PYTHONPATH=. python tests/test_tmdb.py
-# … or use pytest if you have it installed
+# Supabase
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Pipeline sources
+TMDB_API_KEY=
+KOBIS_API_KEY=
+
+# Descope auth (for MCP server)
+DESCOPE_CONFIG_URL=    # .well-known URL from Descope console
+SERVER_URL=            # Railway public URL
 ```
 
 ---
 
-## Operations notes
+## Connecting to Claude
 
-- **Idempotency**: Upserts on natural keys (`tmdb_id`, etc.) mean re-runs update rather than duplicate core rows.
-- **Rate limiting**: `pipeline/utils.py` provides `polite_delay` and retry helpers; respect site terms and API quotas when increasing limits.
-- **Cost & runtime**: Initial population workflows use **up to 360 minutes** per job where configured; GitHub-hosted runners can still time out on extreme loads—tune batch sizes in each job if needed.
-- **Security**: Never commit `.env` or service role keys. The service role key must only run in trusted environments (CI secrets or your own runner).
+1. Go to claude.ai → Settings → Connectors
+2. Click **Add custom connector**
+3. Paste: `https://kr-movie-tv-mcp-production.up.railway.app/mcp`
+4. Complete the Descope OAuth flow
 
 ---
 
-## Related documentation in code
+## Known Limitations
 
-- [`data_sources/`](data_sources/) — raw API/scrape implementations; start here when a source breaks or Terms change.
-- [`pipeline/orchestrator.py`](pipeline/orchestrator.py) — chained initial / nightly / weekly order for local runs.
-- [`db/models.py`](db/models.py) — what each column means and which upstream source owns it.
-- [`db/queries.py`](db/queries.py) — Supabase reads/writes for downstream consumers (including MCP servers).
+- **Rotten Tomatoes:** Package breaks when RT changes HTML. Currently excluded.
+- **Korean streaming platforms (TVING, Wavve, Coupang):** Require Korean phone number. Excluded.
+- **KMDb:** API membership pending approval.
+- **JustWatch initial population:** ~85 seconds per title across 4 regions. Weekly sync adds 200 titles at a time.
+- **TV shows:** ~3,500 of ~10,000 synced (GitHub Actions 6-hour timeout during initial population). Nightly sync continues filling gaps.
+- **Airing status:** Shows added before MDL sync completed may have incorrect status. Resolves over time.
 
-If you add an MCP server package, keep **reads** on the anon key with RLS policies, and **writes** restricted to this pipeline using the service role in CI.
+---
+
+## Phase Status
+
+| Phase | Status |
+|---|---|
+| Phase 1: Data Sources (10 sources) | ✅ Complete |
+| Phase 2: Database Schema (11 tables) | ✅ Complete |
+| Phase 3: Pipeline Jobs + GitHub Actions | ✅ Complete |
+| Phase 4: MCP Server (FastMCP + Descope + Railway) | ✅ Complete |
+| Phase 5: Marketplace Listing | 🔄 In Progress |
