@@ -50,8 +50,8 @@ from db.queries import (
 
 # Initialize Descope auth
 _auth = DescopeProvider(
-    config_url=os.environ["DESCOPE_WELL_KNOWN_URL"],
-    base_url=os.environ["MCP_SERVER_URL"],
+    config_url=os.environ["DESCOPE_CONFIG_URL"],
+    base_url=os.environ["SERVER_URL"],
 )
 
 mcp = FastMCP(
@@ -87,9 +87,9 @@ from starlette.responses import JSONResponse
 @mcp.custom_route("/.well-known/oauth-protected-metadata", methods=["GET"])
 async def oauth_metadata(request: Request) -> JSONResponse:
     return JSONResponse({
-        "resource": "https://kr-movie-tv-mcp-production.up.railway.app/mcp",
+        "resource": f"{os.environ['SERVER_URL']}/mcp",
         "authorization_servers": [
-            "https://api.descope.com/v1/apps/agentic/P3DVwYR2mZLFjsY4msqlW0HIfYUR/MS3DVwdTMGdvPzckaY6wDNwPgoGxa"
+            os.environ["DESCOPE_CONFIG_URL"].replace("/.well-known/openid-configuration", "")
         ],
         "bearer_methods_supported": ["header"],
         "scopes_supported": []
