@@ -884,6 +884,14 @@ def compare_ratings(title: str, content_type: str = "drama") -> dict:
         }
 
 
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "server": "Korean Entertainment MCP"})
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     mcp.run(
